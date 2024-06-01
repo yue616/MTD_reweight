@@ -1,5 +1,6 @@
 import numpy as np
 import argparse
+from scipy.ndimage import gaussian_filter
 
 
 class Reweight:
@@ -74,41 +75,18 @@ class Reweight:
 
         return grids, fes
 
-    def output_fes(self, smooth=True, sigma=0.1):
+    def output_fes(self, grids, fes):
         """
         for three CVs, output FES in gaussian-type cube format and also a plain text file.
         for two CVs, output format is suitable for gnuplot.
         for one CV, first column corresponding to grid value, and second column for free energy.
         :return: output grids and FES when CVs higher than three
         """
-        grids, fes = self.reweight()
 
         if len(grids) > 3:
             print("warning! Can not output fes when CVs number higher than 3, return FES and corresponding grids")
             return grids, fes
         elif len(grids) == 3:
-            # define three dimensional gaussian function
-            def gauss3d(x, x0, y, y0, z, z0, sigma):
-                return np.exp(-((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2) / (2 * sigma ** 2))
-
-            # performing gaussian smoothing of 3D FES
-            if smooth:
-                x, y, z = grids[0], grids[1], grids[2]
-                xm, ym, zm = np.meshgrid(x, y, z)
-
-                smoothed_fes = np.zeros_like(fes, dtype=np.float64)
-                for i in range(len(x)):
-                    for j in range(len(y)):
-                        for k in range(len(z)):
-                            kernel = gauss3d(xm, i, ym, j, zm, k, sigma)
-                            kernel /= np.sum(kernel)
-                            # remove inf in fes in case of unrealistic results when summing it up.
-                            filetered_fes = fes[np.isfinite(fes)]
-                            fes_max = np.max(filetered_fes)
-                            smoothed_fes[i, j, k] = np.sum(np.where(fes != np.inf, fes, fes_max) * kernel)
-
-                fes = smoothed_fes
-
             # firstly, output fes into a plain text file
             out = []
             out.extend(["#Fields", "\t", "CV1", "\t", "CV2", "\t", "CV3", "\t", "free energy", "\n"])
@@ -148,27 +126,6 @@ class Reweight:
                 f.write("".join(cube))
 
         elif len(grids) == 2:
-            # define two dimensional gaussian function
-            def gauss2d(x, x0, y, y0, sigma):
-                return np.exp(-((x - x0) ** 2 + (y - y0) ** 2) / (2 * sigma ** 2))
-
-            x, y = grids[0], grids[1]
-            xm, ym = np.meshgrid(x, y)
-
-            # performing gaussian smoothing
-            if smooth:
-                smoothed_fes = np.zeros_like(fes, dtype=np.float64)
-                for i in range(len(x)):
-                    for j in range(len(y)):
-                        kernel = gauss2d(xm, x[i], ym, y[j], sigma)
-                        kernel /= np.sum(kernel)
-                        # remove inf in fes in case of unrealistic results when summing it up.
-                        filtered_fes = fes[np.isfinite(fes)]
-                        fes_max = np.max(filtered_fes)
-                        smoothed_fes[i, j] = np.sum(np.where(fes != np.inf, fes, fes_max) * kernel)
-
-                fes = smoothed_fes
-
             out = []
             out.extend(["#Fields", "\t", "CV1", "\t", "CV2", "\t", "free energy", "\n"])
             for i, iv in enumerate(grids[0]):
@@ -182,24 +139,6 @@ class Reweight:
                 f.write("".join(out))
 
         elif len(grids) == 1:
-            # define gaussian function
-            def gauss1d(x, x0, sigma):
-                return np.exp(-(x - x0) ** 2 / (2 * sigma ** 2))
-
-            # performing gaussian smoothing
-            if smooth:
-                x = grids[0]
-                smoothed_fes = np.zeros_like(fes, dtype=np.float64)
-                for i in range(len(x)):
-                    kernel = gauss1d(x, x[i], sigma)
-                    kernel /= np.sum(kernel)
-                    # remove inf in fes in case of unrealistic results when summing it up.
-                    filtered_fes = fes[np.isfinite(fes)]
-                    fes_max = np.max(filtered_fes)
-                    smoothed_fes[i] = np.sum(np.where(fes != np.inf, fes, fes_max) * kernel)
-
-                fes = smoothed_fes
-
             out = []
             out.extend(["#Fields", "\t", "CV1", "\t", "free energy", "\n"])
             for i, iv in enumerate(grids[0]):
@@ -208,15 +147,25 @@ class Reweight:
             with open("fes_1d.txt", "w") as f:
                 f.write("".join(out))
 
+    def smoothing(self, fes, sigma):
+        # performing gaussian smoothing for the fes
+        filtered_fes = fes[np.isfinite(fes)]
+        fes_max = np.max(filtered_fes)
+        smoothed_fes = gaussian_filter(fes, sigma, mode='constant', cval=fes_max)
+        # restore the original inf value
+        fes = np.where(smoothed_fes != fes_max, smoothed_fes, np.inf)
+
+        return fes
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Free energy reconstruction (reweight) based on the arthrogram '
                                                  'proposed by Pratyush Tiwary and Michele Parrinello '
                                                  '(J. Phys. Chem. B 2015, 119, 736−742)')
     parser.add_argument('--rcv', dest='rcv', type=int, nargs='+', help='Column(s) in COLVAR file to be '
-                                                                       'reweighted, note that the first column starts from 1 rather than 0.')
+                                                'reweighted, note that the first column starts from 1 rather than 0.')
     parser.add_argument('--bias', dest='bias', type=int, nargs='+', help='Column(s) of bias potential in '
-                                                                         'COLVAR file. These biases can be, e.g., MTD bias, wall bias, etc.')
+                                                 'COLVAR file. These biases can be, e.g., MTD bias, wall bias, etc.')
     parser.add_argument('--colvar', dest='colvar', type=str, help='Filename of colvar file, '
                                                                   'COLVAR is used by default.', default="COLVAR")
     parser.add_argument('--temp', dest='temp', type=float, help='System temperature.', default=298.15)
@@ -226,9 +175,9 @@ def parse_args():
     parser.add_argument('--max', dest='max', type=float, help='The maximum of Grids boundaries, program will '
                                                               'detect it if omitted.', default=None)
     parser.add_argument('--smooth', dest='smooth', action='store_true', help='Performing Gaussian '
-                                                                             'smoothing for the calculated Free Energy Surface (FES).')
+                                                            'smoothing for the calculated Free Energy Surface (FES).')
     parser.add_argument('--sigma', dest='sigma', type=float, help='The sigma parameter used in a Gaussian '
-                                                                  'function determines the level of smoothing applied to the fes. '
+                                                    'function determines the level of smoothing applied to the fes. '
                                                                   'A larger sigma value results in a smoother fes.',
                         default=0.1)
 
@@ -240,6 +189,9 @@ if __name__ == "__main__":
     args = parse_args()
     r = Reweight(rcv=args.rcv, bias=args.bias, colvar=args.colvar, temp=args.temp, nbin=args.nbin, min=args.min,
                  max=args.max)
-    r.output_fes(smooth=args.smooth, sigma=args.sigma)
+    grids, fes = r.reweight()
+    if args.smooth:
+        fes = r.smoothing(fes, args.sigma)
+    r.output_fes(grids=grids, fes=fes)
 
 

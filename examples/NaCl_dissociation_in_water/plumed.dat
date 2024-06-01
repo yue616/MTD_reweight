@@ -36,4 +36,4 @@ UPPER_WALLS ...
  LABEL=uwall
 ... UPPER_WALLS
 
-PRINT ARG=d1,coord,metad.bias,metad.rbias,metad.rct,uwall.bias STRIDE=100 FILE=COLVAR_biased
+PRINT ARG=d1,coord,metad.bias,metad.rbias,metad.rct,uwall.bias STRIDE=500 FILE=COLVAR
