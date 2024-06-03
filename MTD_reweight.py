@@ -193,7 +193,7 @@ def parse_args():
                              'to the fes. A larger sigma value results in a smoother fes. Singe sigma value means the '
                              'level of smoothing is equivalent on all grid dimension, Note that if multiple sigma are '
                              'provided, each sigma will determine the level of smoothing on corresponding grid dimention, '
-                             'total sigma should equal to the number of reweighted CVs.', default=0.1)
+                             'total sigma should equal to the number of reweighted CVs.')
 
     args = parser.parse_args()
     return args
@@ -205,5 +205,7 @@ if __name__ == "__main__":
                  max=args.max)
     grids, fes = r.reweight()
     if args.smooth:
+        if len(args.sigma) == 1:
+            args.sigma = args.sigma[0]
         fes = r.smoothing(fes, args.sigma)
     r.output_fes(grids=grids, fes=fes)
