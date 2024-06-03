@@ -15,7 +15,7 @@
 
 `gnuplot> plot "fes.dat" u 1:2 w l lw 2 not`
 
-`gnuplot> set xlabel "Phr / rad"`
+`gnuplot> set xlabel "Phi / rad"`
 
 `gnuplot> set ylabel "Free energy / kj/mol"`
 
