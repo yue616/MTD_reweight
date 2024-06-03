@@ -19,29 +19,45 @@ class Reweight:
         """
         self.rcv = rcv
         self.bias = bias
-        self.colvar = colvar
+        try:
+            # read colvar file
+            self.colvar = np.loadtxt(colvar)
+        except FileNotFoundError:
+            raise
+
         self.kbt = temp * 8.31446261815324e-3  # Boltzmann constant 8.31446261815324e-3 kj/mol/k
         self.nbin = nbin
-        self.min = min
-        self.max = max
+        self.min = []
+        self.max = []
+
+        # find the border of CVs if min and max are not specified.
+        if min is None and max is None:
+            for cvi in self.rcv:
+                col_idx = cvi - 1
+                min, max = np.min(self.colvar[:, col_idx]), np.max(self.colvar[:, col_idx])
+                self.min.append(min)
+                self.max.append(max)
+        elif min is None and max is not None:
+            for cvi in self.rcv:
+                col_idx = cvi - 1
+                min = np.min(self.colvar[:, col_idx])
+                self.min.append(min)
+            self.max.extend(max)
+        elif max is None and min is not None:
+            for cvi in self.rcv:
+                col_idx = cvi - 1
+                max = np.max(self.colvar[:, col_idx])
+                self.max.append(max)
+            self.min.extend(min)
+        else:
+            self.max.extend(max)
+            self.min.extend(min)
+
+        assert len(self.rcv) == len(self.max) == len(self.min)
 
     def reweight(self) -> tuple:
 
-        # read colvar file
-        colvar_file = np.loadtxt(self.colvar)
-
-        # find the maximum and minimum of CVs in rcv if min and max are not specified.
-        if self.min is None or self.max is None:
-            self.min, self.max = [], []
-            for cvi in self.rcv:
-                col_idx = cvi - 1
-                min, max = np.min(colvar_file[:, col_idx]), np.max(colvar_file[:, col_idx])
-                self.min.append(min)
-                self.max.append(max)
-        # else:
-        #     raise ValueError("Both min and max need to be specified!")
-
-        # initialize grid for storing bias value
+        # initialize grid for storing bias value.
         grids = []
         for i in range(len(self.rcv)):
             grid = np.linspace(self.min[i], self.max[i], num=self.nbin, endpoint=True)
@@ -51,7 +67,7 @@ class Reweight:
         fes = np.zeros([self.nbin] * len(self.rcv))
 
         # loop row in COLVAR and accumulate the calculated weights
-        for row in colvar_file:
+        for row in self.colvar:
             # allocate the CVs into grids and find CVs indices
             diff = [np.abs(row[j - 1] - grids[i]) for i, j in enumerate(self.rcv)]
             cvs_loc = [np.argmin(i) for i in diff]
@@ -148,38 +164,36 @@ class Reweight:
                 f.write("".join(out))
 
     def smoothing(self, fes, sigma):
-        # performing gaussian smoothing for the fes
-        filtered_fes = fes[np.isfinite(fes)]
-        fes_max = np.max(filtered_fes)
-        smoothed_fes = gaussian_filter(fes, sigma, mode='constant', cval=fes_max)
-        # restore the original inf value
-        fes = np.where(smoothed_fes != fes_max, smoothed_fes, np.inf)
 
-        return fes
+        smoothed_fes = gaussian_filter(fes, sigma)
+
+        return smoothed_fes
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Free energy reconstruction (reweight) based on the arthrogram '
+    parser = argparse.ArgumentParser(description='Free energy reconstruction (reweighting) based on the arthrogram '
                                                  'proposed by Pratyush Tiwary and Michele Parrinello '
                                                  '(J. Phys. Chem. B 2015, 119, 736−742)')
-    parser.add_argument('--rcv', dest='rcv', type=int, nargs='+', help='Column(s) in COLVAR file to be '
-                                                'reweighted, note that the first column starts from 1 rather than 0.')
-    parser.add_argument('--bias', dest='bias', type=int, nargs='+', help='Column(s) of bias potential in '
-                                                 'COLVAR file. These biases can be, e.g., MTD bias, wall bias, etc.')
-    parser.add_argument('--colvar', dest='colvar', type=str, help='Filename of colvar file, '
-                                                                  'COLVAR is used by default.', default="COLVAR")
+    parser.add_argument('--rcv', dest='rcv', type=int, nargs='+',
+                        help='Column(s) in COLVAR file to be reweighted, note that the first column starts from 1 rather than 0.')
+    parser.add_argument('--bias', dest='bias', type=int, nargs='+',
+                        help='Column(s) of bias potential in COLVAR file. These biases can be, e.g., MTD bias, wall bias, etc.')
+    parser.add_argument('--colvar', dest='colvar', type=str,
+                        help='Filename of colvar file, COLVAR is used by default.', default="COLVAR")
     parser.add_argument('--temp', dest='temp', type=float, help='System temperature.', default=298.15)
     parser.add_argument('--nbin', dest='nbin', type=int, help='The number of bins for the outputted FES', default=100)
-    parser.add_argument('--min', dest='min', type=float, help='The minimum of Grids boundaries, program will '
-                                                              'detect it if omitted.', default=None)
-    parser.add_argument('--max', dest='max', type=float, help='The maximum of Grids boundaries, program will '
-                                                              'detect it if omitted.', default=None)
-    parser.add_argument('--smooth', dest='smooth', action='store_true', help='Performing Gaussian '
-                                                            'smoothing for the calculated Free Energy Surface (FES).')
-    parser.add_argument('--sigma', dest='sigma', type=float, help='The sigma parameter used in a Gaussian '
-                                                    'function determines the level of smoothing applied to the fes. '
-                                                                  'A larger sigma value results in a smoother fes.',
-                        default=0.1)
+    parser.add_argument('--min', dest='min', type=float, nargs='+',
+                        help='The minimum of Grids boundaries, program will detect it if omitted.', default=None)
+    parser.add_argument('--max', dest='max', type=float, nargs='+',
+                        help='The maximum of Grids boundaries, program will detect it if omitted.', default=None)
+    parser.add_argument('--smooth', dest='smooth', action='store_true',
+                        help='Performing Gaussian smoothing for the calculated Free Energy Surface (FES).')
+    parser.add_argument('--sigma', dest='sigma', type=float, nargs='+',
+                        help='The sigma parameter used in a Gaussian function determines the level of smoothing applied '
+                             'to the fes. A larger sigma value results in a smoother fes. Singe sigma value means the '
+                             'level of smoothing is equivalent on all grid dimension, Note that if multiple sigma are '
+                             'provided, each sigma will determine the level of smoothing on corresponding grid dimention, '
+                             'total sigma should equal to the number of reweighted CVs.', default=0.1)
 
     args = parser.parse_args()
     return args
@@ -193,5 +207,3 @@ if __name__ == "__main__":
     if args.smooth:
         fes = r.smoothing(fes, args.sigma)
     r.output_fes(grids=grids, fes=fes)
-
-
